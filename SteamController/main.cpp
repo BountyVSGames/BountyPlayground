@@ -133,6 +133,15 @@ int main()
 					controller->SetButtonDownState(event.gbutton.button, event.gbutton.down);
 				}
 				break;
+			case SDL_EVENT_GAMEPAD_TOUCHPAD_UP:
+				controller->RegisterFingerOnTouchpad(event.gtouchpad);
+				break;
+			case SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN:
+				controller->RegisterFingerOnTouchpad(event.gtouchpad);
+				break;
+			case SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION:
+				controller->RegisterMovementOnTouchpad(event.gtouchpad);
+				break;
 			case SDL_EVENT_GAMEPAD_ADDED:
 				if (controller == nullptr)
 				{
@@ -162,7 +171,7 @@ int main()
 			controller->DrawDebugMenu();
 		}
 
-		ImGui::ShowDemoWindow();
+		//ImGui::ShowDemoWindow();
 
 		SDL_Surface* textSurface = TTF_RenderText_Solid(font, "Hello Word", 0, SDL_Color{ 255, 255, 0, 255 });
 		fontTexture = SDL_CreateTextureFromSurface(renderer, textSurface);

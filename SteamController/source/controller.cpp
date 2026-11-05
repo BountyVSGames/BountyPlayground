@@ -2,6 +2,7 @@
 #include <imgui.h>
 #include <format>
 
+#define AXIS_TRIGGER_MAX 32766
 
 Controller::Controller() 
 {
@@ -25,7 +26,7 @@ SDL_AppResult Controller::Initialize(SDL_JoystickID connectedJoystickId)
 		return SDL_APP_FAILURE;
 	}
 
-	if (!SDL_HasGamepad)
+	if (!SDL_HasGamepad())
 	{
 		std::cout << "No controllers connected." << std::endl;
 		return SDL_APP_FAILURE;
@@ -88,8 +89,8 @@ void Controller::DrawDebugMenu()
 	windowFlags |= ImGuiWindowFlags_NoResize;
 
 	const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
-	ImGui::SetNextWindowPos(ImVec2(mainViewport->WorkPos.x + 650, mainViewport->WorkPos.y + 20), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowSize(ImVec2(500, 1280), ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowPos(ImVec2(mainViewport->WorkPos.x + 20, mainViewport->WorkPos.y + 20));
+	ImGui::SetNextWindowSize(ImVec2(300, 400));
 
 	if (!ImGui::Begin("Controller Debug Menu", 0, windowFlags))
 	{
@@ -97,28 +98,106 @@ void Controller::DrawDebugMenu()
 		return;
 	}
 
-	ImGui::Text("Controller Debug:");
-	ImGui::Spacing();
+	ImGui::Text("Controller Debug");
 
 	if (gamepad)
 	{
 		ImGui::Text("Controlller Name: %s", SDL_GetGamepadName(gamepad));
+
+		int power = 0;
+		std::string powerStateString = "";
+		
+		SDL_PowerState powerState = SDL_GetGamepadPowerInfo(gamepad, &power);
+		
+		switch (powerState)
+		{
+		case SDL_POWERSTATE_ON_BATTERY:
+			powerStateString = "on battery";
+			break;
+		case SDL_POWERSTATE_CHARGING:
+			powerStateString = "charging";
+			break;
+		case SDL_POWERSTATE_CHARGED:
+			powerStateString = "full";
+			break;
+		case SDL_POWERSTATE_ERROR:
+		case SDL_POWERSTATE_UNKNOWN:
+		case SDL_POWERSTATE_NO_BATTERY:
+		default:
+			powerStateString = "unknown";
+			break;
+		}
+
+		ImGui::Text("Battery Level: %i", power);
+		ImGui::Text("Controller State: %s", powerStateString.c_str());
 		ImGui::Spacing();
 
-		ImGui::Text("Input");
+		ImGui::Text("Gyro:");
 
 		Vec3 gyro = GetGyro();
-		ImGui::Text("Gyro: %f, %f, %f", gyro.x, gyro.y, gyro.z);
+		ImGui::Text("Gyro Rotation: %f, %f, %f", gyro.x, gyro.y, gyro.z);
 
-		Vec2 leftJoystick = GetJoystick(true);
-		ImGui::Text("Left Stick: %f, %f", leftJoystick.x, leftJoystick.y);
+		ImGui::Spacing();
+		ImGui::Text("Joysticks:");
 
-		Vec2 rightJoystick = GetJoystick(false);
-		ImGui::Text("Right Stick: %f, %f", rightJoystick.x, rightJoystick.y);
+		Vec2 leftJoystickRaw = GetJoystickRaw(true);
+		ImGui::Text("Raw Left Stick: %f, %f", leftJoystickRaw.x, leftJoystickRaw.y);
 
-		std::string inputButtonLabel = std::format("Controller Buttons Pressed {}", pressedButtonIds.size());
+		Vec2 rightJoystickRaw = GetJoystickRaw(false);
+		ImGui::Text("Raw Right Stick: %f, %f", rightJoystickRaw.x, rightJoystickRaw.y);
 
-		if (ImGui::TreeNode(inputButtonLabel.c_str()))
+		Vec2 leftJoystickNormalized = GetJoystickNormalized(true, rightJoystickRaw);
+		ImGui::Text("Raw Left Stick: %f, %f", leftJoystickNormalized.x, leftJoystickNormalized.y);
+
+		Vec2 rightJoystickNormalized = GetJoystickNormalized(false, leftJoystickRaw);
+		ImGui::Text("Raw Right Stick: %f, %f", rightJoystickNormalized.x, rightJoystickNormalized.y);
+		ImGui::Spacing();
+
+		ImGui::Text("Touchpad:");
+
+		if (lTouchpadFinger)
+		{
+			ImGui::Text("Left Touchpad Pressed");
+			ImGui::Text("Movement: X: %f, Y: %f", lTouchpadFinger->pos.x, lTouchpadFinger->pos.y);
+			ImGui::Text("Pressure: %f", lTouchpadFinger->pressure);
+		}
+		else
+		{
+			ImGui::Text("Left Touchpad not pressed");
+		}
+
+		if (rTouchpadFinger)
+		{
+			ImGui::Text("Right Touchpad Pressed");
+			ImGui::Text("Movement: X: %f, Y: %f", rTouchpadFinger->pos.x, rTouchpadFinger->pos.y);
+			ImGui::Text("Pressure: %f", rTouchpadFinger->pressure);
+		}
+		else
+		{
+			ImGui::Text("Right Touchpad not pressed");
+		}
+
+		ImGui::Spacing();
+		ImGui::Text("Triggers:");
+
+		float leftTriggerRaw = GetTriggerAxisRaw(SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+		float leftTriggerNormalized = GetTriggerAxisNormalized(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, leftTriggerRaw);
+
+		ImGui::Text("Left Trigger Raw: %f", leftTriggerRaw);
+		ImGui::Text("Left Trigger Normalized: %f", leftTriggerNormalized);
+
+		float rightTriggerRaw = GetTriggerAxisRaw(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+		float rightTriggerNormalized = GetTriggerAxisNormalized(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, rightTriggerRaw);
+
+		ImGui::Text("Right Trigger Raw: %f", rightTriggerRaw);
+		ImGui::Text("Right Trigger Normalized: %f", rightTriggerNormalized);
+
+		ImGui::Spacing();
+		ImGui::Text("Buttons:");
+
+		std::string inputButtonLabel = std::format("Controller Buttons Pressed: {}", pressedButtonIds.size());
+
+		if (ImGui::TreeNode("Buttons", "%s", inputButtonLabel.c_str()))
 		{
 			for (int buttonID : pressedButtonIds)
 			{
@@ -141,43 +220,53 @@ const char* Controller::GetButtonNameFromEnum(int buttonID)
 	switch ((ButtonBindings)buttonID)
 	{
 	case ButtonBindings::LStickCapacitiveTouch:
-		return "LStickCapacitiveTouch";
+		return "L Stick Capacitive Touch";
 	case ButtonBindings::RStickCapacitiveTouch:
-		return "RStickCapacitiveTouch";
+		return "R Stick Capacitive Touch";
 	case ButtonBindings::LTrackpadClick:
-		return "LTrackpadClick";
+		return "L Trackpad Click";
 	case ButtonBindings::RTrackpadClick:
-		return "RTrackpadClick";
+		return "R Trackpad Click";
 	case ButtonBindings::R4Pressed:
-		return "R4Pressed";
+		return "R4";
 	case ButtonBindings::L4Pressed:
-		return "L4Pressed";
+		return "L4";
 	case ButtonBindings::R5Pressed:
-		return "R5Pressed";
+		return "R5";
 	case ButtonBindings::L5Pressed:
-		return "L5Pressed";
+		return "L5";
 	case ButtonBindings::LGripsense:
-		return "LGripsense";
+		return "L Gripsense";
 	case ButtonBindings::RGripsense:
-		return "RGripsense";
+		return "R Gripsense";
 	case ButtonBindings::QuickAccessMenu:
-		return "QuickAccessMenu";
+		return "Quick Access Menu";
 	case ButtonBindings::APressed:
-		return "APressed";
+		return "A";
 	case ButtonBindings::BPressed:
-		return "BPressed";
+		return "B";
 	case ButtonBindings::XPressed:
-		return "XPressed";
+		return "X";
 	case ButtonBindings::YPressed:
-		return "YPressed";
+		return "Y Pressed";
 	case ButtonBindings::DPadUp:
-		return "DPadUp";
+		return "D Pad Up";
 	case ButtonBindings::DPadRight:
-		return "DPadRight";
+		return "D Pad Right";
 	case ButtonBindings::DPadDown:
-		return "DPadDown";
+		return "D Pad Down";
 	case ButtonBindings::DPadLeft:
-		return "DPadLeft";
+		return "D Pad Left";
+	case ButtonBindings::LShoulder:
+		return "L Shoulder";
+	case ButtonBindings::RShoulder:
+		return "R Shoulder";
+	case ButtonBindings::SelectPressed:
+		return "Select";
+	case ButtonBindings::SteamButtonPressed:
+		return "Steam Button";
+	case ButtonBindings::StartPressed:
+		return "Start";
 	default:
 		return "";
 	}
@@ -199,35 +288,125 @@ const Vec3 Controller::GetGyro()
 
 	return Vec3();
 }
-const Vec2 Controller::GetJoystick(bool left)
+
+const float Controller::GetTriggerAxisRaw(SDL_GamepadAxis axis)
 {
-	float x = 0;
-	float y = 0;
+	if (axis != SDL_GAMEPAD_AXIS_LEFT_TRIGGER && axis != SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
+	{
+		printf("Controller::GetTriggerAxis: Left or Right Trigger axis expected. Instead got %i. Aborting call...", (int)axis);
+		return -1.0f;
+	}
+
+	return SDL_GetGamepadAxis(gamepad, axis);	
+}
+const float Controller::GetTriggerAxisNormalized(SDL_GamepadAxis axis, float axisValue = -1.0f)
+{
+	if (axis != SDL_GAMEPAD_AXIS_LEFT_TRIGGER && axis != SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
+	{
+		printf("Controller::GetTriggerAxis: Left or Right Trigger axis expected. Instead got %i. Aborting call...", (int)axis);
+		return -1.0f;
+	}
+
+	float value = axisValue == -1.0f ? GetTriggerAxisRaw(axis) : axisValue;
+
+	value /= AXIS_TRIGGER_MAX;
+	return value;
+}
+
+const Vec2 Controller::GetJoystickRaw(bool left)
+{
+	Vec2 value = Vec2();
 
 	if (left)
 	{
-		x = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
-		y = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY);
+		value.x = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
+		value.y = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY);
 	}
 	else
 	{
-		x = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX);
-		y = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY);
+		value.x = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX);
+		value.y = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY);
 	}
 
-	x /= SDL_JOYSTICK_AXIS_MAX;
-	y /= SDL_JOYSTICK_AXIS_MAX;
-
-	ApplyDeadzone(x);
-	ApplyDeadzone(y);
-
-	return Vec2(x, y);
+	return value;
 }
+const Vec2 Controller::GetJoystickNormalized(bool left, Vec2 joystickValue = Vec2(0, 0))
+{
+	Vec2 value = joystickValue.IsZero() ? GetJoystickRaw(left) :
+		joystickValue;
+
+	value.x /= SDL_JOYSTICK_AXIS_MAX;
+	value.y /= SDL_JOYSTICK_AXIS_MAX;
+
+	ApplyDeadzone(value.x);
+	ApplyDeadzone(value.y);
+
+	return value;
+}
+
+void Controller::RegisterFingerOnTouchpad(SDL_GamepadTouchpadEvent& event)
+{
+	bool fingerDown = event.type == SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN;
+	bool leftFinger = event.touchpad == 0;
+
+	if (fingerDown)
+	{
+		if (leftFinger)
+		{
+			lTouchpadFinger = TouchpadFinger(Vec2(event.x, event.y), event.pressure);
+		}
+		else
+		{
+			rTouchpadFinger = TouchpadFinger(Vec2(event.x, event.y), event.pressure);
+		}
+	}
+	else
+	{
+		if (leftFinger)
+		{
+			lTouchpadFinger.reset();
+		}
+		else
+		{
+			rTouchpadFinger.reset();
+		}
+	}
+}
+void Controller::RegisterMovementOnTouchpad(SDL_GamepadTouchpadEvent& event)
+{
+	if (event.touchpad == 0)
+	{
+		if (lTouchpadFinger.has_value())
+		{
+			lTouchpadFinger->pos = Vec2(event.x, event.y);
+			lTouchpadFinger->pressure = event.pressure;
+		}
+		else
+		{
+			printf("Error: Movement found on left touchpad, but finger was not registered");
+			return;
+		}
+	}
+	else
+	{
+		if (rTouchpadFinger.has_value())
+		{
+			rTouchpadFinger->pos = Vec2(event.x, event.y);
+			rTouchpadFinger->pressure = event.pressure;
+		}
+		else
+		{
+			printf("Error: Movement found on right touchpad, but finger was not registered");
+			return;
+		}
+	}
+}
+
 void Controller::ApplyDeadzone(float& value) const
 {
 	float absValue = std::abs(value);
 
-	if (absValue <= deadzone)
+	if (absValue <= joystickDeadzone)
 	{
 		value = 0.0f;
 		return;
@@ -235,7 +414,7 @@ void Controller::ApplyDeadzone(float& value) const
 
 	float sign = (value > .0f) ? 1.0f : -1.0f;
 
-	value = (sign * (absValue - deadzone) / (1.0f - deadzone));
+	value = (sign * (absValue - joystickDeadzone) / (1.0f - joystickDeadzone));
 }
 
 void Controller::SetButtonDownState(int buttonID, bool state)
